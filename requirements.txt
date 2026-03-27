@@ -1,0 +1,23 @@
+# Core
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+
+# Database
+sqlalchemy>=2.0,<3.0
+aiosqlite>=0.19,<1.0
+
+# LLM
+httpx>=0.25,<1.0
+
+# Telegram Bot
+python-telegram-bot>=21.0,<22.0
+
+# Scheduling
+apscheduler>=3.10,<4.0
+
+# Env
+python-dotenv>=1.0,<2.0
+
+# Logging
+structlog>=23.0,<25.0
+
