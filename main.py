@@ -3,6 +3,7 @@
 Usage:
     python main.py cli        — Run in CLI mode (for testing)
     python main.py telegram   — Run with Telegram bot
+    python main.py mcp        — Run internal Fitness MCP server over stdio
     python main.py            — Default: CLI mode
 """
 
@@ -123,6 +124,12 @@ async def run_cli():
     await cli_main()
 
 
+def run_mcp():
+    """Run the internal MCP server."""
+    from agents.mcp.internal_server import run_internal_mcp_server
+    run_internal_mcp_server()
+
+
 def main():
     """Parse mode and run."""
     configure_logging()
@@ -132,12 +139,13 @@ def main():
         asyncio.run(run_telegram())
     elif mode == "cli":
         asyncio.run(run_cli())
+    elif mode == "mcp":
+        run_mcp()
     else:
         print(f"Mode inconnu : {mode}")
-        print("Usage : python main.py [cli|telegram]")
+        print("Usage : python main.py [cli|telegram|mcp]")
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-
