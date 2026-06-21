@@ -54,7 +54,24 @@ Commence par te présenter et poser les premières questions de manière naturel
 """
 
 
-def _format_profile(profile: UserProfile | None) -> str:
+def _value(item, field: str, default=None):
+    """Read a field from either a SQLAlchemy object or serialized state dict."""
+    if item is None:
+        return default
+    if isinstance(item, dict):
+        return item.get(field, default)
+    return getattr(item, field, default)
+
+
+def _format_date(value) -> str:
+    if value is None:
+        return "?"
+    if hasattr(value, "strftime"):
+        return value.strftime("%d/%m")
+    return str(value)[:10]
+
+
+def _format_profile(profile: UserProfile | dict | None) -> str:
     """Format user profile as context string."""
     if profile is None:
         return "Profil : aucune information disponible."
@@ -73,59 +90,59 @@ def _format_profile(profile: UserProfile | None) -> str:
         "extra_info": "Informations supplémentaires",
     }
     for field, label in field_labels.items():
-        value = getattr(profile, field, None)
+        value = _value(profile, field)
         if value is not None:
             parts.append(f"- {label} : {value}")
 
-    if not any(getattr(profile, f, None) for f in field_labels):
+    if not any(_value(profile, f) for f in field_labels):
         parts.append("Profil non encore renseigné.")
 
     return "\n".join(parts)
 
 
-def _format_checkins(checkins: list[CheckIn]) -> str:
+def _format_checkins(checkins: list[CheckIn | dict]) -> str:
     """Format recent check-ins for context."""
     if not checkins:
         return ""
     parts = ["=== CHECK-INS RÉCENTS ==="]
     for ci in checkins[-5:]:
-        date_str = ci.date.strftime("%d/%m") if ci.date else "?"
-        line = f"- {date_str} ({ci.check_in_type})"
-        if ci.energy_level:
-            line += f" | Énergie: {ci.energy_level}/10"
-        if ci.motivation_level:
-            line += f" | Motivation: {ci.motivation_level}/10"
-        if ci.mood:
-            line += f" | Humeur: {ci.mood}"
-        if ci.pain_reported:
-            line += f" | Douleur: {ci.pain_reported}"
-        if ci.notes:
-            line += f" | Notes: {ci.notes}"
+        date_str = _format_date(_value(ci, "date"))
+        line = f"- {date_str} ({_value(ci, 'check_in_type')})"
+        if _value(ci, "energy_level"):
+            line += f" | Énergie: {_value(ci, 'energy_level')}/10"
+        if _value(ci, "motivation_level"):
+            line += f" | Motivation: {_value(ci, 'motivation_level')}/10"
+        if _value(ci, "mood"):
+            line += f" | Humeur: {_value(ci, 'mood')}"
+        if _value(ci, "pain_reported"):
+            line += f" | Douleur: {_value(ci, 'pain_reported')}"
+        if _value(ci, "notes"):
+            line += f" | Notes: {_value(ci, 'notes')}"
         parts.append(line)
     return "\n".join(parts)
 
 
-def _format_workouts(workouts: list[WorkoutLog]) -> str:
+def _format_workouts(workouts: list[WorkoutLog | dict]) -> str:
     """Format recent workout logs for context."""
     if not workouts:
         return ""
     parts = ["=== SÉANCES RÉCENTES ==="]
     for w in workouts[-5:]:
-        date_str = w.date.strftime("%d/%m") if w.date else "?"
-        status = "✅ Faite" if w.completed else "❌ Non faite"
+        date_str = _format_date(_value(w, "date"))
+        status = "✅ Faite" if _value(w, "completed") else "❌ Non faite"
         line = f"- {date_str} : {status}"
-        if w.actual_workout:
-            line += f" | {w.actual_workout[:80]}"
-        if w.difficulty_rating:
-            line += f" | Difficulté: {w.difficulty_rating}/10"
+        if _value(w, "actual_workout"):
+            line += f" | {_value(w, 'actual_workout')[:80]}"
+        if _value(w, "difficulty_rating"):
+            line += f" | Difficulté: {_value(w, 'difficulty_rating')}/10"
         parts.append(line)
     return "\n".join(parts)
 
 
 def build_system_prompt(
-    profile: UserProfile | None = None,
-    checkins: list[CheckIn] | None = None,
-    workouts: list[WorkoutLog] | None = None,
+    profile: UserProfile | dict | None = None,
+    checkins: list[CheckIn | dict] | None = None,
+    workouts: list[WorkoutLog | dict] | None = None,
     is_onboarding: bool = False,
     extra_instructions: str = "",
 ) -> LLMMessage:
@@ -145,4 +162,3 @@ def build_system_prompt(
         parts.append(f"\n=== INSTRUCTIONS SUPPLÉMENTAIRES ===\n{extra_instructions}")
 
     return LLMMessage(role="system", content="\n\n".join(parts))
-

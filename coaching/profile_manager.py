@@ -67,7 +67,7 @@ class ProfileManager:
             logger.warning("Failed to extract profile data", error=str(e))
             return {}
 
-    def check_profile_completeness(self, profile: UserProfile) -> tuple[bool, list[str]]:
+    def check_profile_completeness(self, profile: UserProfile | dict | None) -> tuple[bool, list[str]]:
         """Check which essential profile fields are still missing."""
         essential_fields = {
             "age": "ton âge",
@@ -85,15 +85,16 @@ class ProfileManager:
 
         missing_essential = []
         for field, label in essential_fields.items():
-            if getattr(profile, field, None) is None:
+            value = profile.get(field) if isinstance(profile, dict) else getattr(profile, field, None)
+            if value is None:
                 missing_essential.append(label)
 
         missing_important = []
         for field, label in important_fields.items():
-            if getattr(profile, field, None) is None:
+            value = profile.get(field) if isinstance(profile, dict) else getattr(profile, field, None)
+            if value is None:
                 missing_important.append(label)
 
         is_complete = len(missing_essential) == 0
         all_missing = missing_essential + missing_important
         return is_complete, all_missing
-
