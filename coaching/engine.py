@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from llm.base import BaseLLMProvider, LLMMessage
 from llm.prompt_builder import build_system_prompt
 from llm.vision_provider import analyze_image_gemini
+from agents.runtime import CoachAgentRuntime
 from database.repositories import (
     UserRepository, ProfileRepository, ConversationRepository, TrackingRepository,
 )
@@ -21,8 +22,35 @@ class CoachingEngine:
     def __init__(self, llm: BaseLLMProvider):
         self.llm = llm
         self.profile_manager = ProfileManager(llm)
+        self.agent_runtime = CoachAgentRuntime(llm, self.profile_manager)
 
     async def handle_message(
+        self, session: AsyncSession, external_id: str, user_message: str,
+        platform: str = "telegram", username: str = None,
+    ) -> str:
+        """Process a user message through the agent graph and return the coach's response."""
+        try:
+            reply = await self.agent_runtime.handle_user_message(
+                session=session,
+                external_id=external_id,
+                user_message=user_message,
+                platform=platform,
+                username=username,
+            )
+            await session.commit()
+            return reply
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Agent runtime failed; falling back to legacy engine", error=str(e))
+            return await self._handle_message_legacy(
+                session=session,
+                external_id=external_id,
+                user_message=user_message,
+                platform=platform,
+                username=username,
+            )
+
+    async def _handle_message_legacy(
         self, session: AsyncSession, external_id: str, user_message: str,
         platform: str = "telegram", username: str = None,
     ) -> str:
@@ -105,6 +133,16 @@ class CoachingEngine:
 
     async def generate_morning_message(self, session: AsyncSession, user_id: int) -> str:
         """Generate the morning motivation/plan message."""
+        try:
+            return await self.agent_runtime.generate_scheduled_message(
+                session=session,
+                user_id=user_id,
+                workflow="morning_plan",
+            )
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Morning agent workflow failed; falling back to legacy prompt", error=str(e))
+
         profile_repo = ProfileRepository(session)
         tracking_repo = TrackingRepository(session)
 
@@ -130,6 +168,16 @@ class CoachingEngine:
 
     async def generate_evening_checkin(self, session: AsyncSession, user_id: int) -> str:
         """Generate the evening check-in message."""
+        try:
+            return await self.agent_runtime.generate_scheduled_message(
+                session=session,
+                user_id=user_id,
+                workflow="evening_checkin",
+            )
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Evening agent workflow failed; falling back to legacy prompt", error=str(e))
+
         profile_repo = ProfileRepository(session)
         tracking_repo = TrackingRepository(session)
 
@@ -154,6 +202,16 @@ class CoachingEngine:
 
     async def generate_followup_message(self, session: AsyncSession, user_id: int) -> str:
         """Generate a follow-up/relance message for an inactive user."""
+        try:
+            return await self.agent_runtime.generate_scheduled_message(
+                session=session,
+                user_id=user_id,
+                workflow="inactive_followup",
+            )
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Follow-up agent workflow failed; falling back to legacy prompt", error=str(e))
+
         profile_repo = ProfileRepository(session)
         tracking_repo = TrackingRepository(session)
 
@@ -204,6 +262,28 @@ class CoachingEngine:
         if vision_analysis.startswith("⚠️") or vision_analysis.startswith("❌"):
             return vision_analysis
 
+        try:
+            coaching_reply = await self.agent_runtime.handle_meal_analysis(
+                session=session,
+                external_id=external_id,
+                vision_analysis=vision_analysis,
+                mime_type=mime_type,
+                platform=platform,
+                username=username,
+            )
+            await session.commit()
+            logger.info("Meal photo analyzed through agent runtime", user_id=user.id)
+            return coaching_reply
+        except Exception as e:
+            await session.rollback()
+            logger.exception("Meal-photo agent workflow failed; falling back to legacy flow", error=str(e))
+            user_repo = UserRepository(session)
+            profile_repo = ProfileRepository(session)
+            conv_repo = ConversationRepository(session)
+            tracking_repo = TrackingRepository(session)
+            user = await user_repo.get_or_create(external_id, platform, username)
+            await user_repo.update_last_message(user.id)
+
         # 2. Save vision analysis in conversation history so DeepSeek sees it
         conv = await conv_repo.get_or_create_active(user.id)
         await conv_repo.add_message(
@@ -252,4 +332,3 @@ class CoachingEngine:
         await session.commit()
         logger.info("Meal photo analyzed and coaching feedback generated", user_id=user.id)
         return coaching_reply
-

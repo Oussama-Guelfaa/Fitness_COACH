@@ -78,6 +78,21 @@ class SchedulerSettings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+class MCPSettings(BaseSettings):
+    """MCP integration configuration."""
+
+    enabled: bool = Field(default=False, alias="MCP_ENABLED")
+    servers_json: str = Field(default="", alias="MCP_SERVERS_JSON")
+    internal_stdio_enabled: bool = Field(default=False, alias="MCP_INTERNAL_STDIO_ENABLED")
+    internal_server_command: str = Field(default="python", alias="MCP_INTERNAL_SERVER_COMMAND")
+    internal_server_args: str = Field(
+        default="-m agents.mcp.internal_server",
+        alias="MCP_INTERNAL_SERVER_ARGS",
+    )
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
 class AppSettings(BaseSettings):
     """Top-level application settings."""
 
@@ -106,8 +121,11 @@ class AppSettings(BaseSettings):
     def vision(self) -> VisionSettings:
         return VisionSettings()
 
+    @property
+    def mcp(self) -> MCPSettings:
+        return MCPSettings()
+
 
 def get_settings() -> AppSettings:
     """Get application settings singleton."""
     return AppSettings()
-

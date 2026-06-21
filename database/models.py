@@ -26,6 +26,9 @@ class User(Base):
     workout_logs = relationship("WorkoutLog", back_populates="user", cascade="all, delete-orphan")
     nutrition_logs = relationship("NutritionLog", back_populates="user", cascade="all, delete-orphan")
     check_ins = relationship("CheckIn", back_populates="user", cascade="all, delete-orphan")
+    agent_runs = relationship("AgentRun", back_populates="user", cascade="all, delete-orphan")
+    coach_memories = relationship("CoachMemory", back_populates="user", cascade="all, delete-orphan")
+    outbox_messages = relationship("OutboxMessage", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -145,3 +148,119 @@ class CheckIn(Base):
 
     user = relationship("User", back_populates="check_ins")
 
+
+class AgentRun(Base):
+    """Trace of one agent graph execution."""
+    __tablename__ = "agent_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    run_type = Column(String(50), nullable=False, default="message")
+    workflow = Column(String(50), nullable=False, default="user_message")
+    intent = Column(String(50), nullable=True)
+    status = Column(String(30), nullable=False, default="running")
+    thread_id = Column(String(255), nullable=True, index=True)
+    input_preview = Column(Text, nullable=True)
+    output_preview = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="agent_runs")
+    events = relationship("AgentEvent", back_populates="run", cascade="all, delete-orphan")
+
+
+class AgentEvent(Base):
+    """Node-level trace event for an agent run."""
+    __tablename__ = "agent_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("agent_runs.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    node = Column(String(100), nullable=False)
+    event_type = Column(String(100), nullable=False)
+    payload_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    run = relationship("AgentRun", back_populates="events")
+
+
+class CoachMemory(Base):
+    """Durable user-specific memory for the fitness twin."""
+    __tablename__ = "coach_memories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    memory_type = Column(String(50), nullable=False, default="fitness_twin")
+    memory_key = Column(String(120), nullable=False)
+    content = Column(Text, nullable=False)
+    confidence = Column(Float, default=1.0)
+    source_run_id = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="coach_memories")
+
+
+class PlanVersion(Base):
+    """Versioned generated workout or nutrition plan."""
+    __tablename__ = "plan_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    plan_type = Column(String(50), nullable=False)  # workout, nutrition, mixed
+    title = Column(String(255), nullable=True)
+    content = Column(Text, nullable=False)
+    version = Column(Integer, default=1)
+    source_run_id = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class PendingAction(Base):
+    """Action proposed by an agent that may need user approval."""
+    __tablename__ = "pending_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    action_type = Column(String(80), nullable=False)
+    payload_json = Column(JSON, nullable=True)
+    status = Column(String(30), nullable=False, default="pending")
+    requires_confirmation = Column(Boolean, default=True)
+    due_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class SafetyEvent(Base):
+    """Record of a health or safety-sensitive interaction."""
+    __tablename__ = "safety_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    run_id = Column(Integer, nullable=True)
+    severity = Column(String(30), nullable=False, default="caution")
+    concerns_json = Column(JSON, nullable=True)
+    message_excerpt = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class OutboxMessage(Base):
+    """Outbound message generated by the agent runtime."""
+    __tablename__ = "outbox_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    external_id = Column(String(255), nullable=False)
+    platform = Column(String(50), nullable=False, default="telegram")
+    channel = Column(String(50), nullable=False, default="chat")
+    body = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False, default="returned")
+    source_run_id = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="outbox_messages")

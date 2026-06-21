@@ -8,6 +8,9 @@ aiosqlite>=0.19,<1.0
 
 # LLM
 httpx>=0.25,<1.0
+langgraph>=0.2,<1.0
+langchain-mcp-adapters>=0.1,<1.0
+fastmcp>=2.0,<3.0
 
 # Telegram Bot
 python-telegram-bot>=21.0,<22.0
@@ -20,4 +23,3 @@ python-dotenv>=1.0,<2.0
 
 # Logging
 structlog>=23.0,<25.0
-
