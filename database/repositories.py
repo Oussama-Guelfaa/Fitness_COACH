@@ -10,6 +10,8 @@ from sqlalchemy.orm import selectinload
 from database.models import (
     User, UserProfile, Conversation, Message,
     WorkoutLog, NutritionLog, CheckIn,
+    AgentRun, AgentEvent, CoachMemory, PlanVersion,
+    PendingAction, SafetyEvent, OutboxMessage,
 )
 
 
@@ -36,6 +38,11 @@ class UserRepository:
 
     async def get_by_external_id(self, external_id: str) -> Optional[User]:
         stmt = select(User).where(User.external_id == external_id).options(selectinload(User.profile))
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_id(self, user_id: int) -> Optional[User]:
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.profile))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -183,3 +190,233 @@ class TrackingRepository:
         items.reverse()
         return items
 
+    async def get_recent_nutrition(self, user_id: int, limit: int = 7) -> list[NutritionLog]:
+        stmt = (
+            select(NutritionLog)
+            .where(NutritionLog.user_id == user_id)
+            .order_by(desc(NutritionLog.date))
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        items = list(result.scalars().all())
+        items.reverse()
+        return items
+
+
+class AgentRepository:
+    """Persistence for agent graph traces, durable memory, and outbound messages."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create_run(
+        self,
+        user_id: int,
+        run_type: str,
+        workflow: str,
+        thread_id: str,
+        input_preview: str = "",
+        metadata: dict | None = None,
+    ) -> AgentRun:
+        run = AgentRun(
+            user_id=user_id,
+            run_type=run_type,
+            workflow=workflow,
+            thread_id=thread_id,
+            input_preview=input_preview[:1000] if input_preview else None,
+            metadata_json=metadata,
+        )
+        self.session.add(run)
+        await self.session.flush()
+        return run
+
+    async def add_event(
+        self,
+        run_id: int,
+        user_id: int,
+        node: str,
+        event_type: str,
+        payload: dict | None = None,
+    ) -> AgentEvent:
+        event = AgentEvent(
+            run_id=run_id,
+            user_id=user_id,
+            node=node,
+            event_type=event_type,
+            payload_json=payload,
+        )
+        self.session.add(event)
+        await self.session.flush()
+        return event
+
+    async def complete_run(
+        self,
+        run_id: int,
+        intent: str | None,
+        output_preview: str,
+        status: str = "completed",
+        error: str | None = None,
+    ):
+        stmt = select(AgentRun).where(AgentRun.id == run_id)
+        result = await self.session.execute(stmt)
+        run = result.scalar_one_or_none()
+        if run:
+            run.intent = intent
+            run.output_preview = output_preview[:1000] if output_preview else None
+            run.status = status
+            run.error = error
+            run.completed_at = datetime.datetime.utcnow()
+            await self.session.flush()
+
+    async def fail_run(self, run_id: int, error: str):
+        await self.complete_run(
+            run_id=run_id,
+            intent=None,
+            output_preview="",
+            status="failed",
+            error=error[:2000],
+        )
+
+    async def get_recent_memories(
+        self,
+        user_id: int,
+        memory_type: str = "fitness_twin",
+        limit: int = 20,
+    ) -> list[CoachMemory]:
+        stmt = (
+            select(CoachMemory)
+            .where(
+                CoachMemory.user_id == user_id,
+                CoachMemory.memory_type == memory_type,
+                CoachMemory.is_active == True,  # noqa: E712
+            )
+            .order_by(desc(CoachMemory.updated_at))
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def upsert_memory(
+        self,
+        user_id: int,
+        memory_key: str,
+        content: str,
+        memory_type: str = "fitness_twin",
+        confidence: float = 1.0,
+        source_run_id: int | None = None,
+    ) -> CoachMemory:
+        stmt = select(CoachMemory).where(
+            CoachMemory.user_id == user_id,
+            CoachMemory.memory_type == memory_type,
+            CoachMemory.memory_key == memory_key,
+        )
+        result = await self.session.execute(stmt)
+        memory = result.scalar_one_or_none()
+        if memory is None:
+            memory = CoachMemory(
+                user_id=user_id,
+                memory_type=memory_type,
+                memory_key=memory_key,
+                content=content,
+                confidence=confidence,
+                source_run_id=source_run_id,
+            )
+            self.session.add(memory)
+        else:
+            memory.content = content
+            memory.confidence = confidence
+            memory.source_run_id = source_run_id
+            memory.is_active = True
+            memory.updated_at = datetime.datetime.utcnow()
+        await self.session.flush()
+        return memory
+
+    async def create_plan_version(
+        self,
+        user_id: int,
+        plan_type: str,
+        content: str,
+        title: str | None = None,
+        source_run_id: int | None = None,
+    ) -> PlanVersion:
+        stmt = (
+            select(PlanVersion)
+            .where(PlanVersion.user_id == user_id, PlanVersion.plan_type == plan_type)
+            .order_by(desc(PlanVersion.version))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        latest = result.scalar_one_or_none()
+        version = (latest.version + 1) if latest else 1
+        plan = PlanVersion(
+            user_id=user_id,
+            plan_type=plan_type,
+            title=title,
+            content=content,
+            version=version,
+            source_run_id=source_run_id,
+        )
+        self.session.add(plan)
+        await self.session.flush()
+        return plan
+
+    async def create_pending_action(
+        self,
+        user_id: int,
+        action_type: str,
+        payload: dict | None = None,
+        requires_confirmation: bool = True,
+        due_at: datetime.datetime | None = None,
+    ) -> PendingAction:
+        action = PendingAction(
+            user_id=user_id,
+            action_type=action_type,
+            payload_json=payload,
+            requires_confirmation=requires_confirmation,
+            due_at=due_at,
+        )
+        self.session.add(action)
+        await self.session.flush()
+        return action
+
+    async def create_safety_event(
+        self,
+        user_id: int,
+        run_id: int | None,
+        concerns: dict,
+        message_excerpt: str,
+        severity: str = "caution",
+    ) -> SafetyEvent:
+        event = SafetyEvent(
+            user_id=user_id,
+            run_id=run_id,
+            severity=severity,
+            concerns_json=concerns,
+            message_excerpt=message_excerpt[:1000] if message_excerpt else None,
+        )
+        self.session.add(event)
+        await self.session.flush()
+        return event
+
+    async def create_outbox_message(
+        self,
+        user_id: int,
+        external_id: str,
+        platform: str,
+        body: str,
+        source_run_id: int | None = None,
+        status: str = "returned",
+        channel: str = "chat",
+    ) -> OutboxMessage:
+        message = OutboxMessage(
+            user_id=user_id,
+            external_id=external_id,
+            platform=platform,
+            channel=channel,
+            body=body,
+            status=status,
+            source_run_id=source_run_id,
+        )
+        self.session.add(message)
+        await self.session.flush()
+        return message

@@ -51,6 +51,8 @@ async def init_db():
     from database.models import (  # noqa: F401
         User, UserProfile, Conversation, Message,
         WorkoutLog, NutritionLog, CheckIn,
+        AgentRun, AgentEvent, CoachMemory, PlanVersion,
+        PendingAction, SafetyEvent, OutboxMessage,
     )
     engine = await get_engine()
     async with engine.begin() as conn:
@@ -64,4 +66,3 @@ async def close_db():
         await _engine.dispose()
         _engine = None
         _session_factory = None
-
