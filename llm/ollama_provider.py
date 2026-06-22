@@ -18,9 +18,14 @@ class OllamaProvider(BaseLLMProvider):
         self.model = settings.model
         self.client = httpx.AsyncClient(timeout=120.0)
 
+    def _chat_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/chat/completions"
+        return f"{self.base_url}/v1/chat/completions"
+
     async def chat(self, messages: list[LLMMessage], **kwargs) -> LLMResponse:
         """Send chat request to Ollama."""
-        url = f"{self.base_url}/v1/chat/completions"
+        url = self._chat_url()
         payload = {
             "model": self.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -62,8 +67,13 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self.model = settings.model
         self.client = httpx.AsyncClient(timeout=120.0)
 
+    def _chat_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/chat/completions"
+        return f"{self.base_url}/v1/chat/completions"
+
     async def chat(self, messages: list[LLMMessage], **kwargs) -> LLMResponse:
-        url = f"{self.base_url}/v1/chat/completions"
+        url = self._chat_url()
         payload = {
             "model": self.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -95,4 +105,3 @@ def create_llm_provider(settings: LLMSettings) -> BaseLLMProvider:
     provider_class = provider_map.get(settings.provider, OllamaProvider)
     logger.info("Creating LLM provider", provider=settings.provider, model=settings.model)
     return provider_class(settings)
-
