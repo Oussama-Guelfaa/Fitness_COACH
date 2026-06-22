@@ -1,5 +1,6 @@
 """Telegram bot interface for the fitness coach."""
 
+import os
 import structlog
 from telegram import Update
 from telegram.ext import (
@@ -14,6 +15,12 @@ from coaching.engine import CoachingEngine
 from database.database import get_session, init_db
 from database.repositories import UserRepository
 from config.settings import get_settings
+from services.user_capabilities import (
+    generate_user_summary_pdf,
+    get_weather_text,
+    set_location_from_city,
+    set_location_from_coordinates,
+)
 
 logger = structlog.get_logger()
 
@@ -107,6 +114,70 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await session.close()
 
 
+async def cmd_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /location <city> command."""
+    if not update.message:
+        return
+    city = " ".join(context.args or []).strip()
+    if not city:
+        await update.message.reply_text(
+            "Utilisation : /location Paris\n"
+            "Tu peux aussi partager ta position Telegram directement."
+        )
+        return
+
+    ext_id = str(update.effective_user.id)
+    session = await get_session()
+    try:
+        _, reply = await set_location_from_city(
+            session,
+            ext_id,
+            "telegram",
+            city,
+            username=update.effective_user.first_name,
+        )
+    finally:
+        await session.close()
+    await update.message.reply_text(reply)
+
+
+async def cmd_weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /weather command."""
+    if not update.message:
+        return
+    ext_id = str(update.effective_user.id)
+    session = await get_session()
+    try:
+        reply = await get_weather_text(session, ext_id)
+    finally:
+        await session.close()
+    await update.message.reply_text(reply)
+
+
+async def cmd_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate and send a styled coach PDF."""
+    if not update.message:
+        return
+    ext_id = str(update.effective_user.id)
+    await update.message.reply_text("Génération du PDF coach...")
+    session = await get_session()
+    try:
+        file_path, reply = await generate_user_summary_pdf(session, ext_id)
+    finally:
+        await session.close()
+
+    if not file_path:
+        await update.message.reply_text(reply)
+        return
+
+    with open(file_path, "rb") as document:
+        await update.message.reply_document(
+            document=document,
+            filename=file_path.rsplit("/", 1)[-1],
+            caption=reply,
+        )
+
+
 MAX_TELEGRAM_LENGTH = 4096
 
 
@@ -135,6 +206,18 @@ async def _send_long_message(message_obj, text: str):
             await message_obj.reply_text(chunk)
 
 
+async def _send_generated_document(message_obj, file_path: str | None):
+    """Send a generated PDF document when the agent created one."""
+    if not file_path or not os.path.exists(file_path):
+        return
+    with open(file_path, "rb") as document:
+        await message_obj.reply_document(
+            document=document,
+            filename=os.path.basename(file_path),
+            caption="Voici le PDF généré par le coach.",
+        )
+
+
 async def _handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE, is_start: bool = False):
     """Handle any text message."""
     if not update.message or not _engine:
@@ -148,15 +231,18 @@ async def _handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE, is_st
         return
 
     session = await get_session()
+    generated_document_path = None
     try:
         reply = await _engine.handle_message(
             session, ext_id, text,
             platform="telegram",
             username=user.first_name,
         )
+        generated_document_path = _engine.last_generated_document_path
     finally:
         await session.close()
     await _send_long_message(update.message, reply)
+    await _send_generated_document(update.message, generated_document_path)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,12 +281,41 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_long_message(update.message, reply)
 
 
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Telegram location sharing with explicit user consent."""
+    if not update.message or not update.message.location:
+        return
+
+    user = update.effective_user
+    ext_id = str(user.id)
+    location = update.message.location
+
+    session = await get_session()
+    try:
+        _, reply = await set_location_from_coordinates(
+            session,
+            ext_id,
+            "telegram",
+            latitude=location.latitude,
+            longitude=location.longitude,
+            username=user.first_name,
+        )
+    finally:
+        await session.close()
+
+    await update.message.reply_text(reply)
+
+
 def _configure_app(app: Application):
     """Add handlers to a Telegram Application."""
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("morning", cmd_morning))
     app.add_handler(CommandHandler("evening", cmd_evening))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("location", cmd_location))
+    app.add_handler(CommandHandler("weather", cmd_weather))
+    app.add_handler(CommandHandler("pdf", cmd_pdf))
+    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -233,4 +348,3 @@ def create_telegram_apps(engine: CoachingEngine) -> list[Application]:
         logger.info("Telegram bot configured", token_suffix=token[-6:])
         apps.append(app)
     return apps
-

@@ -23,12 +23,14 @@ class CoachingEngine:
         self.llm = llm
         self.profile_manager = ProfileManager(llm)
         self.agent_runtime = CoachAgentRuntime(llm, self.profile_manager)
+        self.last_generated_document_path: str | None = None
 
     async def handle_message(
         self, session: AsyncSession, external_id: str, user_message: str,
         platform: str = "telegram", username: str = None,
     ) -> str:
         """Process a user message through the agent graph and return the coach's response."""
+        self.last_generated_document_path = None
         try:
             reply = await self.agent_runtime.handle_user_message(
                 session=session,
@@ -37,10 +39,12 @@ class CoachingEngine:
                 platform=platform,
                 username=username,
             )
+            self.last_generated_document_path = self.agent_runtime.last_generated_document_path
             await session.commit()
             return reply
         except Exception as e:
             await session.rollback()
+            self.last_generated_document_path = None
             logger.exception("Agent runtime failed; falling back to legacy engine", error=str(e))
             return await self._handle_message_legacy(
                 session=session,
@@ -133,6 +137,7 @@ class CoachingEngine:
 
     async def generate_morning_message(self, session: AsyncSession, user_id: int) -> str:
         """Generate the morning motivation/plan message."""
+        self.last_generated_document_path = None
         try:
             return await self.agent_runtime.generate_scheduled_message(
                 session=session,
@@ -168,6 +173,7 @@ class CoachingEngine:
 
     async def generate_evening_checkin(self, session: AsyncSession, user_id: int) -> str:
         """Generate the evening check-in message."""
+        self.last_generated_document_path = None
         try:
             return await self.agent_runtime.generate_scheduled_message(
                 session=session,
@@ -202,6 +208,7 @@ class CoachingEngine:
 
     async def generate_followup_message(self, session: AsyncSession, user_id: int) -> str:
         """Generate a follow-up/relance message for an inactive user."""
+        self.last_generated_document_path = None
         try:
             return await self.agent_runtime.generate_scheduled_message(
                 session=session,
@@ -246,6 +253,7 @@ class CoachingEngine:
         3. DeepSeek generates a personalised coaching response using
            the vision analysis + user profile as context.
         """
+        self.last_generated_document_path = None
         user_repo = UserRepository(session)
         profile_repo = ProfileRepository(session)
         conv_repo = ConversationRepository(session)

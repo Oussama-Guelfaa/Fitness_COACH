@@ -8,6 +8,11 @@ from database.database import get_session, init_db, close_db
 from database.repositories import UserRepository
 from llm.ollama_provider import create_llm_provider
 from config.settings import get_settings
+from services.user_capabilities import (
+    generate_user_summary_pdf,
+    get_weather_text,
+    set_location_from_city,
+)
 
 logger = structlog.get_logger()
 
@@ -31,6 +36,9 @@ async def run_cli():
     print("  /morning   — Simuler le message du matin")
     print("  /evening   — Simuler le check-in du soir")
     print("  /profile   — Voir ton profil")
+    print("  /location <ville> — Enregistrer une ville avec consentement")
+    print("  /weather   — Voir la météo de ta localisation")
+    print("  /pdf       — Générer un PDF coach stylé")
     print("=" * 60)
     print()
 
@@ -80,6 +88,17 @@ async def run_cli():
                         reply = "Profil vide. Parle-moi de toi pour le compléter !"
                 else:
                     reply = "Aucun profil trouvé. Envoie un message pour commencer !"
+            elif user_input.lower().startswith("/location"):
+                city = user_input[len("/location"):].strip()
+                if not city:
+                    reply = "Utilisation : /location Paris"
+                else:
+                    _, reply = await set_location_from_city(session, CLI_USER_ID, "cli", city)
+            elif user_input.lower() == "/weather":
+                reply = await get_weather_text(session, CLI_USER_ID)
+            elif user_input.lower() == "/pdf":
+                file_path, message = await generate_user_summary_pdf(session, CLI_USER_ID)
+                reply = f"{message}\nChemin : {file_path}" if file_path else message
             else:
                 reply = await engine.handle_message(
                     session, CLI_USER_ID, user_input, platform="cli"
@@ -100,4 +119,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
