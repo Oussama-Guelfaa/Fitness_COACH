@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.nodes.events import record_event
 from agents.serialization import (
     checkin_to_dict,
+    location_to_dict,
     memory_to_dict,
     message_to_dict,
     nutrition_to_dict,
@@ -16,10 +17,12 @@ from coaching.profile_manager import ProfileManager
 from database.repositories import (
     AgentRepository,
     ConversationRepository,
+    LocationRepository,
     ProfileRepository,
     TrackingRepository,
     UserRepository,
 )
+from services.weather import get_current_weather
 
 
 async def hydrate_state(
@@ -33,6 +36,7 @@ async def hydrate_state(
     conv_repo = ConversationRepository(session)
     tracking_repo = TrackingRepository(session)
     agent_repo = AgentRepository(session)
+    location_repo = LocationRepository(session)
 
     user = None
     if state.get("user_id"):
@@ -53,6 +57,29 @@ async def hydrate_state(
     workouts = await tracking_repo.get_recent_workouts(user.id)
     nutrition = await tracking_repo.get_recent_nutrition(user.id)
     memories = await agent_repo.get_recent_memories(user.id)
+    location = await location_repo.get_active_location(user.id)
+
+    weather = {}
+    if location:
+        try:
+            current_weather = await get_current_weather(
+                location.latitude,
+                location.longitude,
+                timezone=location.timezone or "auto",
+            )
+            weather = {
+                "temperature_c": current_weather.temperature_c,
+                "apparent_temperature_c": current_weather.apparent_temperature_c,
+                "humidity_percent": current_weather.humidity_percent,
+                "precipitation_mm": current_weather.precipitation_mm,
+                "wind_speed_kmh": current_weather.wind_speed_kmh,
+                "weather_code": current_weather.weather_code,
+                "description": current_weather.description,
+                "time": current_weather.time,
+                "summary": current_weather.to_coaching_summary(),
+            }
+        except Exception as exc:
+            weather = {"error": str(exc)}
 
     updates = {
         "user_id": user.id,
@@ -68,6 +95,8 @@ async def hydrate_state(
         "recent_workouts": [workout_to_dict(item) for item in workouts],
         "recent_nutrition": [nutrition_to_dict(item) for item in nutrition],
         "coach_memories": [memory_to_dict(item) for item in memories],
+        "location": location_to_dict(location),
+        "weather": weather,
     }
     await record_event(
         session,
@@ -79,7 +108,8 @@ async def hydrate_state(
             "missing_profile_fields": missing,
             "recent_messages": len(recent_messages),
             "fitness_twin_memories": len(memories),
+            "has_location": bool(location),
+            "has_weather": bool(weather and not weather.get("error")),
         },
     )
     return updates
-

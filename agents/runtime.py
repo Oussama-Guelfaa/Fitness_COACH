@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.nodes.composer import response_composer
 from agents.nodes.critic import coach_critic
+from agents.nodes.document import document_generator
 from agents.nodes.hydrator import hydrate_state
 from agents.nodes.mcp_context import load_mcp_context
 from agents.nodes.memory import memory_curator
@@ -25,6 +26,7 @@ from agents.nodes.specialists import (
     morning_plan_agent,
     nutrition_chef,
     onboarding_agent,
+    document_agent,
     recovery_advisor,
     safety_agent,
     workout_architect,
@@ -51,6 +53,8 @@ class CoachAgentRuntime:
         self.profile_manager = profile_manager
         self.mcp_gateway = mcp_gateway or MCPGateway()
         self._langgraph_available = self._check_langgraph_available()
+        self.last_result: CoachState | None = None
+        self.last_generated_document_path: str | None = None
 
     @staticmethod
     def _check_langgraph_available() -> bool:
@@ -152,6 +156,9 @@ class CoachAgentRuntime:
         async def _accountability(state: CoachState):
             return await accountability_agent(state, session, self.llm)
 
+        async def _document_agent(state: CoachState):
+            return await document_agent(state, session, self.llm)
+
         async def _morning(state: CoachState):
             return await morning_plan_agent(state, session, self.llm)
 
@@ -169,6 +176,9 @@ class CoachAgentRuntime:
 
         async def _composer(state: CoachState):
             return await response_composer(state, session)
+
+        async def _document(state: CoachState):
+            return await document_generator(state, session)
 
         async def _memory(state: CoachState):
             return await memory_curator(state, session)
@@ -188,6 +198,7 @@ class CoachAgentRuntime:
             "recovery": _recovery,
             "checkin": _checkin,
             "accountability": _accountability,
+            "document_request": _document_agent,
             "morning_plan": _morning,
             "evening_checkin": _evening,
             "inactive_followup": _inactive,
@@ -199,6 +210,7 @@ class CoachAgentRuntime:
 
         builder.add_node("coach_critic", _critic)
         builder.add_node("response_composer", _composer)
+        builder.add_node("document_generator", _document)
         builder.add_node("memory_curator", _memory)
 
         builder.add_edge(START, "memory_hydrator")
@@ -212,7 +224,8 @@ class CoachAgentRuntime:
             {name: name for name in specialist_nodes},
         )
         builder.add_edge("coach_critic", "response_composer")
-        builder.add_edge("response_composer", "memory_curator")
+        builder.add_edge("response_composer", "document_generator")
+        builder.add_edge("document_generator", "memory_curator")
         builder.add_edge("memory_curator", END)
         return builder.compile()
 
@@ -236,6 +249,7 @@ class CoachAgentRuntime:
             "recovery": recovery_advisor,
             "checkin": checkin_agent,
             "accountability": accountability_agent,
+            "document_request": document_agent,
             "morning_plan": morning_plan_agent,
             "evening_checkin": evening_checkin_agent,
             "inactive_followup": inactive_followup_agent,
@@ -245,6 +259,7 @@ class CoachAgentRuntime:
         state.update(await specialist(state, session, self.llm))
         state.update(await coach_critic(state, session))
         state.update(await response_composer(state, session))
+        state.update(await document_generator(state, session))
         state.update(await memory_curator(state, session))
         return state
 
@@ -258,6 +273,8 @@ class CoachAgentRuntime:
                 )
             else:
                 result = await self._run_linear(state, session)
+            self.last_result = result
+            self.last_generated_document_path = result.get("generated_document_path")
             return result
         except Exception as exc:
             logger.exception("Agent graph failed", run_id=state.get("run_id"))

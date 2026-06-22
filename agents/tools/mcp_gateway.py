@@ -18,10 +18,12 @@ INTENT_TOOL_KEYWORDS = {
     "workout": ["exercise", "workout", "training", "movement"],
     "nutrition": ["food", "meal", "nutrition", "macro", "recipe"],
     "meal_photo": ["food", "meal", "nutrition", "macro", "vision"],
-    "recovery": ["sleep", "recovery", "readiness", "health"],
-    "accountability": ["calendar", "reminder", "task", "schedule"],
-    "morning_plan": ["exercise", "workout", "food", "meal", "calendar"],
-    "evening_checkin": ["checkin", "workout", "meal", "sleep"],
+    "recovery": ["sleep", "recovery", "readiness", "health", "weather"],
+    "accountability": ["calendar", "reminder", "task", "schedule", "location"],
+    "document_request": ["pdf", "document", "report", "nutrition", "workout"],
+    "morning_plan": ["exercise", "workout", "food", "meal", "calendar", "weather", "pdf"],
+    "evening_checkin": ["checkin", "workout", "meal", "sleep", "pdf"],
+    "general": ["location", "weather", "pdf"],
 }
 
 
@@ -108,4 +110,3 @@ class MCPGateway:
             "total_tools": len(tools),
             "error": self._load_error,
         }
-

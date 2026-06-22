@@ -38,6 +38,32 @@ def _format_mcp_context(state: CoachState) -> str:
     return "\n".join(lines)
 
 
+def _format_environment_context(state: CoachState) -> str:
+    location = state.get("location") or {}
+    weather = state.get("weather") or {}
+    if not location and not weather:
+        return ""
+
+    lines = ["=== CONTEXTE LOCAL CONSENTI ==="]
+    if location:
+        label = location.get("label") or "Position partagée"
+        details = [label]
+        if location.get("admin_area"):
+            details.append(location["admin_area"])
+        if location.get("country"):
+            details.append(location["country"])
+        lines.append(f"- Localisation: {', '.join(details)}")
+    if weather.get("summary"):
+        lines.append(f"- Météo actuelle: {weather['summary']}")
+        lines.append(
+            "- Adapte les recommandations outdoor, hydratation, échauffement et intensité "
+            "selon cette météo, sans dramatiser."
+        )
+    elif weather.get("error"):
+        lines.append("- Météo actuelle indisponible malgré une localisation consentie.")
+    return "\n".join(lines)
+
+
 def _shared_extra(state: CoachState) -> str:
     parts = []
     if state.get("safety_instructions"):
@@ -56,6 +82,10 @@ def _shared_extra(state: CoachState) -> str:
     mcp_context = _format_mcp_context(state)
     if mcp_context:
         parts.append(mcp_context)
+
+    environment = _format_environment_context(state)
+    if environment:
+        parts.append(environment)
 
     return "\n\n".join(parts)
 
@@ -105,6 +135,15 @@ def _intent_extra(state: CoachState) -> tuple[str, str, str | None]:
             "mesurable et réaliste. Si un rappel ou calendrier est demandé, propose l'action "
             "mais indique qu'elle doit être confirmée avant exécution."
         ),
+        "document_request": (
+            "L'utilisateur demande un document PDF. Génère le contenu final du document, "
+            "pas une explication de ce que tu vas faire. Structure avec des titres clairs, "
+            "sections courtes, listes exploitables, quantités, consignes concrètes et "
+            "résumé final. Si le sujet est nutritionnel, inclus repas, calories, quantités, "
+            "macros si utile, budget estimé et alternatives. Si le sujet est entraînement, "
+            "inclus séances, exercices, séries, répétitions, repos, progression et liens "
+            "YouTube de démonstration. Le contenu sera transformé automatiquement en PDF."
+        ),
         "morning_plan": (
             "C'est le matin. Génère un message motivant avec :\n"
             "1. Un encouragement personnalisé\n"
@@ -138,6 +177,14 @@ def _intent_extra(state: CoachState) -> tuple[str, str, str | None]:
         plan_type = "workout"
     elif intent in {"nutrition", "meal_photo"}:
         plan_type = "nutrition"
+    elif intent == "document_request":
+        subject = (state.get("document_request") or {}).get("subject")
+        if subject == "nutrition":
+            plan_type = "nutrition"
+        elif subject == "workout":
+            plan_type = "workout"
+        else:
+            plan_type = "mixed"
     elif intent == "morning_plan":
         plan_type = "mixed"
 
@@ -240,6 +287,10 @@ async def accountability_agent(state: CoachState, session: AsyncSession, llm: Ba
     return await _run_specialist(state, session, llm, "accountability_agent")
 
 
+async def document_agent(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:
+    return await _run_specialist(state, session, llm, "document_agent")
+
+
 async def morning_plan_agent(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:
     return await _run_specialist(state, session, llm, "morning_plan_agent")
 
@@ -254,4 +305,3 @@ async def inactive_followup_agent(state: CoachState, session: AsyncSession, llm:
 
 async def general_coach(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:
     return await _run_specialist(state, session, llm, "general_coach")
-
