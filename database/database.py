@@ -53,6 +53,7 @@ async def init_db():
         WorkoutLog, NutritionLog, CheckIn,
         AgentRun, AgentEvent, CoachMemory, PlanVersion,
         PendingAction, SafetyEvent, OutboxMessage,
+        UserLocation, GeneratedDocument,
     )
     engine = await get_engine()
     async with engine.begin() as conn:

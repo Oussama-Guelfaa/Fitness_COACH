@@ -29,6 +29,8 @@ class User(Base):
     agent_runs = relationship("AgentRun", back_populates="user", cascade="all, delete-orphan")
     coach_memories = relationship("CoachMemory", back_populates="user", cascade="all, delete-orphan")
     outbox_messages = relationship("OutboxMessage", back_populates="user", cascade="all, delete-orphan")
+    locations = relationship("UserLocation", back_populates="user", cascade="all, delete-orphan")
+    generated_documents = relationship("GeneratedDocument", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -264,3 +266,40 @@ class OutboxMessage(Base):
     sent_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="outbox_messages")
+
+
+class UserLocation(Base):
+    """User-provided location stored after explicit consent."""
+    __tablename__ = "user_locations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    label = Column(String(255), nullable=True)
+    timezone = Column(String(100), nullable=True)
+    country = Column(String(100), nullable=True)
+    admin_area = Column(String(100), nullable=True)
+    consent_source = Column(String(50), nullable=False, default="user_shared")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="locations")
+
+
+class GeneratedDocument(Base):
+    """PDF or document generated for a user."""
+    __tablename__ = "generated_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    document_type = Column(String(80), nullable=False)
+    title = Column(String(255), nullable=False)
+    file_path = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False, default="generated")
+    source_run_id = Column(Integer, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="generated_documents")

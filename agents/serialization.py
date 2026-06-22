@@ -69,3 +69,18 @@ def memory_to_dict(memory) -> dict[str, Any]:
         "confidence": getattr(memory, "confidence", None),
         "updated_at": _iso(getattr(memory, "updated_at", None)),
     }
+
+
+def location_to_dict(location) -> dict[str, Any]:
+    if location is None:
+        return {}
+    return {
+        "latitude": getattr(location, "latitude", None),
+        "longitude": getattr(location, "longitude", None),
+        "label": getattr(location, "label", None),
+        "timezone": getattr(location, "timezone", None),
+        "country": getattr(location, "country", None),
+        "admin_area": getattr(location, "admin_area", None),
+        "consent_source": getattr(location, "consent_source", None),
+        "updated_at": _iso(getattr(location, "updated_at", None)),
+    }

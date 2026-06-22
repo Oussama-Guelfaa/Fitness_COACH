@@ -12,6 +12,7 @@ from database.models import (
     WorkoutLog, NutritionLog, CheckIn,
     AgentRun, AgentEvent, CoachMemory, PlanVersion,
     PendingAction, SafetyEvent, OutboxMessage,
+    UserLocation, GeneratedDocument,
 )
 
 
@@ -420,3 +421,79 @@ class AgentRepository:
         self.session.add(message)
         await self.session.flush()
         return message
+
+
+class LocationRepository:
+    """Store and retrieve user-consented location data."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def set_active_location(
+        self,
+        user_id: int,
+        latitude: float,
+        longitude: float,
+        label: str | None = None,
+        timezone: str | None = None,
+        country: str | None = None,
+        admin_area: str | None = None,
+        consent_source: str = "user_shared",
+    ) -> UserLocation:
+        current = await self.get_active_location(user_id)
+        if current:
+            current.is_active = False
+        location = UserLocation(
+            user_id=user_id,
+            latitude=latitude,
+            longitude=longitude,
+            label=label,
+            timezone=timezone,
+            country=country,
+            admin_area=admin_area,
+            consent_source=consent_source,
+        )
+        self.session.add(location)
+        await self.session.flush()
+        return location
+
+    async def get_active_location(self, user_id: int) -> UserLocation | None:
+        stmt = (
+            select(UserLocation)
+            .where(
+                UserLocation.user_id == user_id,
+                UserLocation.is_active == True,  # noqa: E712
+            )
+            .order_by(desc(UserLocation.updated_at))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+class DocumentRepository:
+    """Store generated document metadata."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create_document(
+        self,
+        user_id: int,
+        document_type: str,
+        title: str,
+        file_path: str,
+        source_run_id: int | None = None,
+        metadata: dict | None = None,
+    ) -> GeneratedDocument:
+        document = GeneratedDocument(
+            user_id=user_id,
+            document_type=document_type,
+            title=title,
+            file_path=file_path,
+            source_run_id=source_run_id,
+            metadata_json=metadata,
+        )
+        self.session.add(document)
+        await self.session.flush()
+        return document
