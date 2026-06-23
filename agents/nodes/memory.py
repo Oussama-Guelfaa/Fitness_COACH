@@ -59,11 +59,12 @@ async def memory_curator(state: CoachState, session: AsyncSession) -> dict:
         if profile and not profile.get("profile_complete"):
             await profile_repo.update(state["user_id"], profile_complete=True)
 
-    if state.get("plan_type") and final_response:
+    plan_content = state.get("candidate_response") if intent == "document_request" else final_response
+    if state.get("plan_type") and plan_content:
         await agent_repo.create_plan_version(
             user_id=state["user_id"],
             plan_type=state["plan_type"] or "mixed",
-            content=final_response,
+            content=plan_content,
             title=f"{intent.replace('_', ' ').title()}",
             source_run_id=state.get("run_id"),
         )

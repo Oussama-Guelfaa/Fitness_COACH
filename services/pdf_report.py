@@ -5,6 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -52,9 +53,64 @@ def _paragraphs(text: str, style: ParagraphStyle) -> list:
         if not block:
             flowables.append(Spacer(1, 0.12 * cm))
             continue
-        flowables.append(Paragraph(block, style))
+        flowables.append(Paragraph(escape(_strip_markdown(block)), style))
         flowables.append(Spacer(1, 0.08 * cm))
     return flowables
+
+
+def _strip_markdown(text: str) -> str:
+    text = re.sub(r"^\s*[-*]\s+", "- ", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    return text
+
+
+def _heading_from_line(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    markdown_heading = re.match(r"^#{1,4}\s+(.+)$", stripped)
+    if markdown_heading:
+        return _strip_markdown(markdown_heading.group(1)).strip(" :-")
+    bold_heading = re.match(r"^\*\*(.{3,90})\*\*:?\s*$", stripped)
+    if bold_heading:
+        return _strip_markdown(bold_heading.group(1)).strip(" :-")
+    numbered_heading = re.match(r"^\d+[.)]\s+(.{3,90})$", stripped)
+    if numbered_heading and not stripped.endswith("."):
+        return _strip_markdown(numbered_heading.group(1)).strip(" :-")
+    return None
+
+
+def _sections_from_headings(clean: str, accents: list[str]) -> list[PDFSection]:
+    sections: list[PDFSection] = []
+    current_title: str | None = None
+    current_body: list[str] = []
+
+    def flush():
+        nonlocal current_title, current_body
+        if current_title and any(line.strip() for line in current_body):
+            sections.append(
+                PDFSection(
+                    title=current_title,
+                    body="\n".join(current_body).strip(),
+                    accent=accents[len(sections) % len(accents)],
+                )
+            )
+        current_title = None
+        current_body = []
+
+    for line in clean.splitlines():
+        heading = _heading_from_line(line)
+        if heading:
+            flush()
+            current_title = heading
+            continue
+        if current_title is None and line.strip():
+            current_title = "Synthèse personnalisée"
+        current_body.append(line)
+    flush()
+    return sections
 
 
 def _section_card(section: PDFSection, styles) -> Table:
@@ -219,12 +275,16 @@ def create_coach_pdf(
 def sections_from_coach_text(text: str) -> list[PDFSection]:
     """Convert coach text into styled PDF sections."""
     clean = _clean_text(text)
+    accents = ["#0EA5A4", "#F97316", "#2563EB", "#7C3AED", "#16A34A"]
+    heading_sections = _sections_from_headings(clean, accents)
+    if heading_sections:
+        return heading_sections[:10]
+
     chunks = [chunk.strip() for chunk in re.split(r"\n\s*\n", clean) if chunk.strip()]
     if not chunks:
         return [PDFSection("Plan coach", "Aucun contenu disponible.", "#0EA5A4")]
 
     sections: list[PDFSection] = []
-    accents = ["#0EA5A4", "#F97316", "#2563EB", "#7C3AED", "#16A34A"]
     for index, chunk in enumerate(chunks[:8]):
         lines = chunk.split("\n")
         first = lines[0].strip()

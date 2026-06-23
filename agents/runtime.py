@@ -27,6 +27,7 @@ from agents.nodes.specialists import (
     nutrition_chef,
     onboarding_agent,
     document_agent,
+    out_of_scope_agent,
     recovery_advisor,
     safety_agent,
     workout_architect,
@@ -159,6 +160,9 @@ class CoachAgentRuntime:
         async def _document_agent(state: CoachState):
             return await document_agent(state, session, self.llm)
 
+        async def _out_of_scope(state: CoachState):
+            return await out_of_scope_agent(state, session, self.llm)
+
         async def _morning(state: CoachState):
             return await morning_plan_agent(state, session, self.llm)
 
@@ -199,6 +203,7 @@ class CoachAgentRuntime:
             "checkin": _checkin,
             "accountability": _accountability,
             "document_request": _document_agent,
+            "out_of_scope": _out_of_scope,
             "morning_plan": _morning,
             "evening_checkin": _evening,
             "inactive_followup": _inactive,
@@ -250,6 +255,7 @@ class CoachAgentRuntime:
             "checkin": checkin_agent,
             "accountability": accountability_agent,
             "document_request": document_agent,
+            "out_of_scope": out_of_scope_agent,
             "morning_plan": morning_plan_agent,
             "evening_checkin": evening_checkin_agent,
             "inactive_followup": inactive_followup_agent,
