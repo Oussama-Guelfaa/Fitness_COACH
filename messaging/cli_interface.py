@@ -13,6 +13,7 @@ from services.user_capabilities import (
     get_weather_text,
     set_location_from_city,
 )
+from services.apple_health import create_apple_health_link, get_apple_health_status_text
 
 logger = structlog.get_logger()
 
@@ -39,6 +40,8 @@ async def run_cli():
     print("  /location <ville> — Enregistrer une ville avec consentement")
     print("  /weather   — Voir la météo de ta localisation")
     print("  /pdf       — Générer un PDF coach stylé")
+    print("  /health_link — Générer un code Apple Health")
+    print("  /health_status — Voir l'état Apple Health")
     print("=" * 60)
     print()
 
@@ -99,6 +102,10 @@ async def run_cli():
             elif user_input.lower() == "/pdf":
                 file_path, message = await generate_user_summary_pdf(session, CLI_USER_ID)
                 reply = f"{message}\nChemin : {file_path}" if file_path else message
+            elif user_input.lower() == "/health_link":
+                _, reply = await create_apple_health_link(session, CLI_USER_ID, "cli")
+            elif user_input.lower() == "/health_status":
+                reply = await get_apple_health_status_text(session, CLI_USER_ID)
             else:
                 reply = await engine.handle_message(
                     session, CLI_USER_ID, user_input, platform="cli"

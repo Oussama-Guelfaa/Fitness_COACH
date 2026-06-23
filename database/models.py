@@ -2,8 +2,8 @@
 
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, Boolean, DateTime,
-    ForeignKey, JSON,
+    Column, Integer, String, Text, Float, Boolean, Date, DateTime,
+    ForeignKey, JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from database.database import Base
@@ -31,6 +31,9 @@ class User(Base):
     outbox_messages = relationship("OutboxMessage", back_populates="user", cascade="all, delete-orphan")
     locations = relationship("UserLocation", back_populates="user", cascade="all, delete-orphan")
     generated_documents = relationship("GeneratedDocument", back_populates="user", cascade="all, delete-orphan")
+    health_connections = relationship("HealthConnection", back_populates="user", cascade="all, delete-orphan")
+    health_daily_summaries = relationship("HealthDailySummary", back_populates="user", cascade="all, delete-orphan")
+    health_workouts = relationship("HealthWorkout", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -303,3 +306,75 @@ class GeneratedDocument(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="generated_documents")
+
+
+class HealthConnection(Base):
+    """Consent and sync credentials for a wearable/health data provider."""
+    __tablename__ = "health_connections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    provider = Column(String(50), nullable=False, default="apple_health")
+    status = Column(String(30), nullable=False, default="pending")
+    link_code_hash = Column(String(128), nullable=True, index=True)
+    link_code_expires_at = Column(DateTime, nullable=True)
+    sync_token_hash = Column(String(128), nullable=True, index=True)
+    device_name = Column(String(255), nullable=True)
+    permissions_json = Column(JSON, nullable=True)
+    consent_source = Column(String(80), nullable=False, default="telegram_link")
+    last_synced_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="health_connections")
+
+
+class HealthDailySummary(Base):
+    """Daily Apple Health summary used by the coach graph."""
+    __tablename__ = "health_daily_summaries"
+    __table_args__ = (
+        UniqueConstraint("user_id", "summary_date", "source", name="uq_health_daily_user_date_source"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    summary_date = Column(Date, nullable=False, index=True)
+    source = Column(String(50), nullable=False, default="apple_health")
+    steps = Column(Integer, nullable=True)
+    active_energy_kcal = Column(Float, nullable=True)
+    resting_heart_rate_bpm = Column(Float, nullable=True)
+    hrv_ms = Column(Float, nullable=True)
+    sleep_minutes = Column(Integer, nullable=True)
+    workout_minutes = Column(Integer, nullable=True)
+    walking_running_distance_km = Column(Float, nullable=True)
+    vo2_max = Column(Float, nullable=True)
+    body_mass_kg = Column(Float, nullable=True)
+    raw_payload_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="health_daily_summaries")
+
+
+class HealthWorkout(Base):
+    """Workout imported from Apple Health."""
+    __tablename__ = "health_workouts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "external_uuid", "source", name="uq_health_workout_user_uuid_source"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    external_uuid = Column(String(255), nullable=False)
+    source = Column(String(50), nullable=False, default="apple_health")
+    workout_type = Column(String(100), nullable=True)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    duration_minutes = Column(Float, nullable=True)
+    active_energy_kcal = Column(Float, nullable=True)
+    distance_km = Column(Float, nullable=True)
+    raw_payload_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="health_workouts")

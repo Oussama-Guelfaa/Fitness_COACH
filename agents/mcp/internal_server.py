@@ -9,6 +9,7 @@ import asyncio
 from database.database import close_db, get_session, init_db
 from database.repositories import (
     DocumentRepository,
+    HealthRepository,
     LocationRepository,
     ProfileRepository,
     TrackingRepository,
@@ -16,6 +17,9 @@ from database.repositories import (
 )
 from agents.serialization import (
     checkin_to_dict,
+    health_connection_to_dict,
+    health_daily_summary_to_dict,
+    health_workout_to_dict,
     location_to_dict,
     nutrition_to_dict,
     profile_to_dict,
@@ -192,6 +196,60 @@ if mcp:
                 "document_id": document.id,
                 "file_path": file_path,
                 "document_type": document_type,
+            }
+        finally:
+            await session.close()
+
+    @mcp.tool()
+    async def get_apple_health_status(external_id: str) -> dict:
+        """Return Apple Health connection status and latest sync metadata."""
+        session, user = await _get_user(external_id)
+        try:
+            if not user:
+                return {"found": False, "connection": {}, "latest_summary": {}}
+            health_repo = HealthRepository(session)
+            connection = await health_repo.get_active_connection(user.id)
+            latest = await health_repo.get_latest_daily_summary(user.id)
+            return {
+                "found": bool(connection),
+                "connection": health_connection_to_dict(connection),
+                "latest_summary": health_daily_summary_to_dict(latest),
+            }
+        finally:
+            await session.close()
+
+    @mcp.tool()
+    async def get_recent_health_summaries(external_id: str, days: int = 14) -> dict:
+        """Return recent Apple Health daily summaries for coaching context."""
+        session, user = await _get_user(external_id)
+        try:
+            if not user:
+                return {"found": False, "summaries": []}
+            summaries = await HealthRepository(session).get_recent_daily_summaries(
+                user.id,
+                limit=max(1, min(days, 60)),
+            )
+            return {
+                "found": True,
+                "summaries": [health_daily_summary_to_dict(item) for item in summaries],
+            }
+        finally:
+            await session.close()
+
+    @mcp.tool()
+    async def get_recent_health_workouts(external_id: str, limit: int = 10) -> dict:
+        """Return recent workouts imported from Apple Health."""
+        session, user = await _get_user(external_id)
+        try:
+            if not user:
+                return {"found": False, "workouts": []}
+            workouts = await HealthRepository(session).get_recent_health_workouts(
+                user.id,
+                limit=max(1, min(limit, 30)),
+            )
+            return {
+                "found": True,
+                "workouts": [health_workout_to_dict(item) for item in workouts],
             }
         finally:
             await session.close()

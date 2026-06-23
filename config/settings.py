@@ -93,6 +93,17 @@ class MCPSettings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+class APISettings(BaseSettings):
+    """HTTP API configuration for companion app integrations."""
+
+    host: str = Field(default="0.0.0.0", alias="API_HOST")
+    port: int = Field(default=8000, alias="PORT")
+    public_url: str = Field(default="", alias="API_PUBLIC_URL")
+    healthkit_link_ttl_minutes: int = Field(default=30, alias="HEALTHKIT_LINK_TTL_MINUTES")
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
 class AppSettings(BaseSettings):
     """Top-level application settings."""
 
@@ -124,6 +135,10 @@ class AppSettings(BaseSettings):
     @property
     def mcp(self) -> MCPSettings:
         return MCPSettings()
+
+    @property
+    def api(self) -> APISettings:
+        return APISettings()
 
 
 def get_settings() -> AppSettings:

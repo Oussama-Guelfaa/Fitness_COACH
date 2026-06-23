@@ -4,10 +4,11 @@ import os
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agents.serialization import location_to_dict
+from agents.serialization import health_daily_summary_to_dict, health_workout_to_dict, location_to_dict
 from database.models import User
 from database.repositories import (
     DocumentRepository,
+    HealthRepository,
     LocationRepository,
     ProfileRepository,
     TrackingRepository,
@@ -143,6 +144,7 @@ async def generate_user_summary_pdf(session: AsyncSession, external_id: str) -> 
     profile = await ProfileRepository(session).get_by_user_id(user.id)
     tracking = TrackingRepository(session)
     location = await LocationRepository(session).get_active_location(user.id)
+    health = HealthRepository(session)
 
     sections = [_profile_section(profile)]
 
@@ -167,6 +169,44 @@ async def generate_user_summary_pdf(session: AsyncSession, external_id: str) -> 
     checkins = await tracking.get_recent_checkins(user.id)
     workouts = await tracking.get_recent_workouts(user.id)
     nutrition = await tracking.get_recent_nutrition(user.id)
+    health_connection = await health.get_active_connection(user.id)
+    latest_health = await health.get_latest_daily_summary(user.id)
+    health_workouts = await health.get_recent_health_workouts(user.id, limit=3)
+
+    if health_connection or latest_health or health_workouts:
+        health_lines = []
+        if health_connection:
+            health_lines.append(f"- Statut: {health_connection.status}")
+            if health_connection.device_name:
+                health_lines.append(f"- Appareil: {health_connection.device_name}")
+            if health_connection.last_synced_at:
+                health_lines.append(f"- Dernière sync: {health_connection.last_synced_at.isoformat()} UTC")
+        latest = health_daily_summary_to_dict(latest_health)
+        if latest:
+            health_lines.append(f"- Date résumé: {latest.get('summary_date')}")
+            if latest.get("steps") is not None:
+                health_lines.append(f"- Pas: {latest['steps']}")
+            if latest.get("active_energy_kcal") is not None:
+                health_lines.append(f"- Calories actives: {latest['active_energy_kcal']} kcal")
+            if latest.get("sleep_minutes") is not None:
+                health_lines.append(f"- Sommeil: {round(latest['sleep_minutes'] / 60, 1)} h")
+            if latest.get("resting_heart_rate_bpm") is not None:
+                health_lines.append(f"- Fréquence cardiaque repos: {latest['resting_heart_rate_bpm']} bpm")
+        for workout in health_workouts:
+            item = health_workout_to_dict(workout)
+            health_lines.append(
+                "- Workout Apple Health: "
+                f"{item.get('workout_type') or 'workout'} "
+                f"({round(item['duration_minutes'])} min)" if item.get("duration_minutes") else
+                f"- Workout Apple Health: {item.get('workout_type') or 'workout'}"
+            )
+        sections.append(
+            PDFSection(
+                "Apple Health",
+                "\n".join(health_lines) or "Apple Health connecté, mais aucun résumé importé.",
+                "#DC2626",
+            )
+        )
 
     sections.append(
         _list_section(

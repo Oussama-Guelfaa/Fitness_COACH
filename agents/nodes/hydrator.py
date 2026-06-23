@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.nodes.events import record_event
 from agents.serialization import (
     checkin_to_dict,
+    health_connection_to_dict,
+    health_daily_summary_to_dict,
+    health_workout_to_dict,
     location_to_dict,
     memory_to_dict,
     message_to_dict,
@@ -17,6 +20,7 @@ from coaching.profile_manager import ProfileManager
 from database.repositories import (
     AgentRepository,
     ConversationRepository,
+    HealthRepository,
     LocationRepository,
     ProfileRepository,
     TrackingRepository,
@@ -37,6 +41,7 @@ async def hydrate_state(
     tracking_repo = TrackingRepository(session)
     agent_repo = AgentRepository(session)
     location_repo = LocationRepository(session)
+    health_repo = HealthRepository(session)
 
     user = None
     if state.get("user_id"):
@@ -58,6 +63,10 @@ async def hydrate_state(
     nutrition = await tracking_repo.get_recent_nutrition(user.id)
     memories = await agent_repo.get_recent_memories(user.id)
     location = await location_repo.get_active_location(user.id)
+    health_connection = await health_repo.get_active_connection(user.id)
+    latest_health_summary = await health_repo.get_latest_daily_summary(user.id)
+    recent_health_summaries = await health_repo.get_recent_daily_summaries(user.id)
+    recent_health_workouts = await health_repo.get_recent_health_workouts(user.id)
 
     weather = {}
     if location:
@@ -97,6 +106,10 @@ async def hydrate_state(
         "coach_memories": [memory_to_dict(item) for item in memories],
         "location": location_to_dict(location),
         "weather": weather,
+        "health_connection": health_connection_to_dict(health_connection),
+        "latest_health_summary": health_daily_summary_to_dict(latest_health_summary),
+        "recent_health_summaries": [health_daily_summary_to_dict(item) for item in recent_health_summaries],
+        "recent_health_workouts": [health_workout_to_dict(item) for item in recent_health_workouts],
     }
     await record_event(
         session,
@@ -110,6 +123,9 @@ async def hydrate_state(
             "fitness_twin_memories": len(memories),
             "has_location": bool(location),
             "has_weather": bool(weather and not weather.get("error")),
+            "has_apple_health": bool(health_connection),
+            "health_summaries": len(recent_health_summaries),
+            "health_workouts": len(recent_health_workouts),
         },
     )
     return updates

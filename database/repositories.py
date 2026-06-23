@@ -1,6 +1,8 @@
 """Data access layer for all entities."""
 
 import datetime
+import hashlib
+import secrets
 from typing import Optional
 
 from sqlalchemy import select, desc
@@ -13,6 +15,7 @@ from database.models import (
     AgentRun, AgentEvent, CoachMemory, PlanVersion,
     PendingAction, SafetyEvent, OutboxMessage,
     UserLocation, GeneratedDocument,
+    HealthConnection, HealthDailySummary, HealthWorkout,
 )
 
 
@@ -497,3 +500,265 @@ class DocumentRepository:
         self.session.add(document)
         await self.session.flush()
         return document
+
+
+class HealthRepository:
+    """Store Apple Health consent, daily summaries, and workouts."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def hash_secret(value: str) -> str:
+        return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def generate_link_code() -> str:
+        return "-".join(secrets.token_hex(2).upper() for _ in range(3))
+
+    @staticmethod
+    def generate_sync_token() -> str:
+        return secrets.token_urlsafe(32)
+
+    async def create_link_code(
+        self,
+        user_id: int,
+        ttl_minutes: int = 30,
+        provider: str = "apple_health",
+        permissions: list[str] | None = None,
+        consent_source: str = "telegram_link",
+    ) -> tuple[HealthConnection, str]:
+        now = datetime.datetime.utcnow()
+        pending_stmt = select(HealthConnection).where(
+            HealthConnection.user_id == user_id,
+            HealthConnection.provider == provider,
+            HealthConnection.status == "pending",
+        )
+        pending = await self.session.execute(pending_stmt)
+        for connection in pending.scalars().all():
+            connection.status = "expired"
+            connection.updated_at = now
+
+        link_code = self.generate_link_code()
+        connection = HealthConnection(
+            user_id=user_id,
+            provider=provider,
+            status="pending",
+            link_code_hash=self.hash_secret(link_code),
+            link_code_expires_at=now + datetime.timedelta(minutes=ttl_minutes),
+            permissions_json=permissions or [],
+            consent_source=consent_source,
+        )
+        self.session.add(connection)
+        await self.session.flush()
+        return connection, link_code
+
+    async def claim_link_code(
+        self,
+        link_code: str,
+        device_name: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> tuple[HealthConnection, str] | tuple[None, None]:
+        now = datetime.datetime.utcnow()
+        stmt = (
+            select(HealthConnection)
+            .where(
+                HealthConnection.link_code_hash == self.hash_secret(link_code),
+                HealthConnection.status == "pending",
+                HealthConnection.link_code_expires_at > now,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        connection = result.scalar_one_or_none()
+        if not connection:
+            return None, None
+
+        sync_token = self.generate_sync_token()
+        active_stmt = select(HealthConnection).where(
+            HealthConnection.user_id == connection.user_id,
+            HealthConnection.provider == connection.provider,
+            HealthConnection.status == "active",
+        )
+        active = await self.session.execute(active_stmt)
+        for existing in active.scalars().all():
+            existing.status = "revoked"
+            existing.updated_at = now
+
+        connection.status = "active"
+        connection.sync_token_hash = self.hash_secret(sync_token)
+        connection.link_code_hash = None
+        connection.link_code_expires_at = None
+        connection.device_name = device_name
+        if permissions is not None:
+            connection.permissions_json = permissions
+        connection.updated_at = now
+        await self.session.flush()
+        return connection, sync_token
+
+    async def get_connection_for_sync_token(self, sync_token: str) -> HealthConnection | None:
+        stmt = (
+            select(HealthConnection)
+            .where(
+                HealthConnection.sync_token_hash == self.hash_secret(sync_token),
+                HealthConnection.status == "active",
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_active_connection(
+        self,
+        user_id: int,
+        provider: str = "apple_health",
+    ) -> HealthConnection | None:
+        stmt = (
+            select(HealthConnection)
+            .where(
+                HealthConnection.user_id == user_id,
+                HealthConnection.provider == provider,
+                HealthConnection.status == "active",
+            )
+            .order_by(desc(HealthConnection.updated_at))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def revoke_connection(self, user_id: int, provider: str = "apple_health") -> bool:
+        connection = await self.get_active_connection(user_id, provider=provider)
+        if not connection:
+            return False
+        connection.status = "revoked"
+        connection.updated_at = datetime.datetime.utcnow()
+        await self.session.flush()
+        return True
+
+    async def upsert_daily_summary(
+        self,
+        user_id: int,
+        summary_date: datetime.date,
+        source: str = "apple_health",
+        raw_payload: dict | None = None,
+        **fields,
+    ) -> HealthDailySummary:
+        stmt = (
+            select(HealthDailySummary)
+            .where(
+                HealthDailySummary.user_id == user_id,
+                HealthDailySummary.summary_date == summary_date,
+                HealthDailySummary.source == source,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        summary = result.scalar_one_or_none()
+        if summary is None:
+            summary = HealthDailySummary(
+                user_id=user_id,
+                summary_date=summary_date,
+                source=source,
+            )
+            self.session.add(summary)
+
+        allowed_fields = {
+            "steps", "active_energy_kcal", "resting_heart_rate_bpm", "hrv_ms",
+            "sleep_minutes", "workout_minutes", "walking_running_distance_km",
+            "vo2_max", "body_mass_kg",
+        }
+        for key, value in fields.items():
+            if key in allowed_fields:
+                setattr(summary, key, value)
+        summary.raw_payload_json = raw_payload
+        summary.updated_at = datetime.datetime.utcnow()
+        await self.session.flush()
+        return summary
+
+    async def upsert_workout(
+        self,
+        user_id: int,
+        external_uuid: str,
+        started_at: datetime.datetime,
+        source: str = "apple_health",
+        raw_payload: dict | None = None,
+        **fields,
+    ) -> HealthWorkout:
+        stmt = (
+            select(HealthWorkout)
+            .where(
+                HealthWorkout.user_id == user_id,
+                HealthWorkout.external_uuid == external_uuid,
+                HealthWorkout.source == source,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        workout = result.scalar_one_or_none()
+        if workout is None:
+            workout = HealthWorkout(
+                user_id=user_id,
+                external_uuid=external_uuid,
+                started_at=started_at,
+                source=source,
+            )
+            self.session.add(workout)
+
+        allowed_fields = {
+            "workout_type", "ended_at", "duration_minutes",
+            "active_energy_kcal", "distance_km",
+        }
+        for key, value in fields.items():
+            if key in allowed_fields:
+                setattr(workout, key, value)
+        workout.started_at = started_at
+        workout.raw_payload_json = raw_payload
+        workout.updated_at = datetime.datetime.utcnow()
+        await self.session.flush()
+        return workout
+
+    async def get_latest_daily_summary(self, user_id: int) -> HealthDailySummary | None:
+        stmt = (
+            select(HealthDailySummary)
+            .where(HealthDailySummary.user_id == user_id)
+            .order_by(desc(HealthDailySummary.summary_date))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_recent_daily_summaries(self, user_id: int, limit: int = 14) -> list[HealthDailySummary]:
+        stmt = (
+            select(HealthDailySummary)
+            .where(HealthDailySummary.user_id == user_id)
+            .order_by(desc(HealthDailySummary.summary_date))
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        items = list(result.scalars().all())
+        items.reverse()
+        return items
+
+    async def get_recent_health_workouts(self, user_id: int, limit: int = 10) -> list[HealthWorkout]:
+        stmt = (
+            select(HealthWorkout)
+            .where(HealthWorkout.user_id == user_id)
+            .order_by(desc(HealthWorkout.started_at))
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        items = list(result.scalars().all())
+        items.reverse()
+        return items
+
+    async def mark_synced(
+        self,
+        connection: HealthConnection,
+        permissions: list[str] | None = None,
+    ) -> HealthConnection:
+        connection.last_synced_at = datetime.datetime.utcnow()
+        connection.updated_at = connection.last_synced_at
+        if permissions is not None:
+            connection.permissions_json = permissions
+        await self.session.flush()
+        return connection

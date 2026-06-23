@@ -21,6 +21,7 @@ from services.user_capabilities import (
     set_location_from_city,
     set_location_from_coordinates,
 )
+from services.apple_health import create_apple_health_link, get_apple_health_status_text
 
 logger = structlog.get_logger()
 
@@ -178,6 +179,37 @@ async def cmd_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def cmd_health_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate a short-lived Apple Health companion link code."""
+    if not update.message:
+        return
+    ext_id = str(update.effective_user.id)
+    session = await get_session()
+    try:
+        _, reply = await create_apple_health_link(
+            session,
+            ext_id,
+            "telegram",
+            username=update.effective_user.first_name,
+        )
+    finally:
+        await session.close()
+    await update.message.reply_text(reply)
+
+
+async def cmd_health_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show Apple Health sync status."""
+    if not update.message:
+        return
+    ext_id = str(update.effective_user.id)
+    session = await get_session()
+    try:
+        reply = await get_apple_health_status_text(session, ext_id)
+    finally:
+        await session.close()
+    await update.message.reply_text(reply)
+
+
 MAX_TELEGRAM_LENGTH = 4096
 
 
@@ -315,6 +347,8 @@ def _configure_app(app: Application):
     app.add_handler(CommandHandler("location", cmd_location))
     app.add_handler(CommandHandler("weather", cmd_weather))
     app.add_handler(CommandHandler("pdf", cmd_pdf))
+    app.add_handler(CommandHandler("health_link", cmd_health_link))
+    app.add_handler(CommandHandler("health_status", cmd_health_status))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

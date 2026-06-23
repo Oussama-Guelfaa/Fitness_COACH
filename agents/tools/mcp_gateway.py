@@ -16,14 +16,15 @@ logger = structlog.get_logger()
 
 INTENT_TOOL_KEYWORDS = {
     "workout": ["exercise", "workout", "training", "movement"],
-    "nutrition": ["food", "meal", "nutrition", "macro", "recipe"],
+    "nutrition": ["food", "meal", "nutrition", "macro", "recipe", "health"],
     "meal_photo": ["food", "meal", "nutrition", "macro", "vision"],
-    "recovery": ["sleep", "recovery", "readiness", "health", "weather"],
-    "accountability": ["calendar", "reminder", "task", "schedule", "location"],
+    "recovery": ["sleep", "recovery", "readiness", "health", "weather", "apple"],
+    "accountability": ["calendar", "reminder", "task", "schedule", "location", "health"],
     "document_request": ["pdf", "document", "report", "nutrition", "workout"],
-    "morning_plan": ["exercise", "workout", "food", "meal", "calendar", "weather", "pdf"],
-    "evening_checkin": ["checkin", "workout", "meal", "sleep", "pdf"],
-    "general": ["location", "weather", "pdf"],
+    "morning_plan": ["exercise", "workout", "food", "meal", "calendar", "weather", "pdf", "health"],
+    "evening_checkin": ["checkin", "workout", "meal", "sleep", "pdf", "health"],
+    "out_of_scope": [],
+    "general": ["location", "weather", "pdf", "health"],
 }
 
 
@@ -95,6 +96,14 @@ class MCPGateway:
     async def describe_tools_for_intent(self, intent: str) -> dict[str, Any]:
         """Return tool metadata scoped to the current agent intent."""
         tools = await self._load_tools()
+        if intent == "out_of_scope":
+            return {
+                "enabled": self.settings.enabled,
+                "intent": intent,
+                "tools": [],
+                "total_tools": len(tools),
+                "error": self._load_error,
+            }
         keywords = INTENT_TOOL_KEYWORDS.get(intent, [])
         if keywords:
             scoped = [

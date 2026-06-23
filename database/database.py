@@ -54,6 +54,7 @@ async def init_db():
         AgentRun, AgentEvent, CoachMemory, PlanVersion,
         PendingAction, SafetyEvent, OutboxMessage,
         UserLocation, GeneratedDocument,
+        HealthConnection, HealthDailySummary, HealthWorkout,
     )
     engine = await get_engine()
     async with engine.begin() as conn:

@@ -3,6 +3,8 @@
 Usage:
     python main.py cli        — Run in CLI mode (for testing)
     python main.py telegram   — Run with Telegram bot
+    python main.py api        — Run the companion HTTP API
+    python main.py telegram-api — Run Telegram bot and companion HTTP API
     python main.py mcp        — Run internal Fitness MCP server over stdio
     python main.py            — Default: CLI mode
 """
@@ -36,7 +38,7 @@ def configure_logging():
     )
 
 
-async def run_telegram():
+async def run_telegram(with_api: bool = False):
     """Run one or more Telegram bots with scheduler."""
     from messaging.telegram_bot import create_telegram_apps
     from scheduler.scheduler import create_scheduler, start_scheduler, stop_scheduler, set_send_callback
@@ -89,7 +91,25 @@ async def run_telegram():
     set_send_callback(send_telegram_message)
     start_scheduler()
 
-    print(f"🏋️ Coach Fitness IA — Mode Telegram ({len(apps)} bot(s))")
+    api_server = None
+    api_task = None
+    if with_api:
+        import uvicorn
+        from api.server import create_app
+
+        api_settings = settings.api
+        api_server = uvicorn.Server(
+            uvicorn.Config(
+                create_app(manage_db=False),
+                host=api_settings.host,
+                port=api_settings.port,
+                log_level=settings.log_level.lower(),
+            )
+        )
+        api_task = asyncio.create_task(api_server.serve())
+
+    mode_label = "Telegram + API" if with_api else "Telegram"
+    print(f"🏋️ Coach Fitness IA — Mode {mode_label} ({len(apps)} bot(s))")
     print("Bot(s) démarré(s). Ctrl+C pour arrêter.")
 
     try:
@@ -107,6 +127,13 @@ async def run_telegram():
             pass
     finally:
         stop_scheduler()
+        if api_server:
+            api_server.should_exit = True
+        if api_task:
+            try:
+                await api_task
+            except Exception:
+                pass
         for app in apps:
             try:
                 await app.updater.stop()
@@ -124,6 +151,23 @@ async def run_cli():
     await cli_main()
 
 
+async def run_api():
+    """Run the companion HTTP API."""
+    import uvicorn
+    from api.server import create_app
+
+    settings = get_settings()
+    api_settings = settings.api
+    config = uvicorn.Config(
+        create_app(manage_db=True),
+        host=api_settings.host,
+        port=api_settings.port,
+        log_level=settings.log_level.lower(),
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
 def run_mcp():
     """Run the internal MCP server."""
     from agents.mcp.internal_server import run_internal_mcp_server
@@ -137,13 +181,17 @@ def main():
 
     if mode == "telegram":
         asyncio.run(run_telegram())
+    elif mode in {"telegram-api", "telegram_api"}:
+        asyncio.run(run_telegram(with_api=True))
+    elif mode == "api":
+        asyncio.run(run_api())
     elif mode == "cli":
         asyncio.run(run_cli())
     elif mode == "mcp":
         run_mcp()
     else:
         print(f"Mode inconnu : {mode}")
-        print("Usage : python main.py [cli|telegram|mcp]")
+        print("Usage : python main.py [cli|telegram|telegram-api|api|mcp]")
         sys.exit(1)
 
 

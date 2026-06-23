@@ -64,6 +64,65 @@ def _format_environment_context(state: CoachState) -> str:
     return "\n".join(lines)
 
 
+def _format_health_context(state: CoachState) -> str:
+    connection = state.get("health_connection") or {}
+    latest = state.get("latest_health_summary") or {}
+    summaries = state.get("recent_health_summaries") or []
+    workouts = state.get("recent_health_workouts") or []
+    if not connection and not latest and not workouts:
+        return ""
+
+    lines = ["=== CONTEXTE APPLE HEALTH CONSENTI ==="]
+    if connection:
+        synced_at = connection.get("last_synced_at") or "jamais"
+        device = connection.get("device_name") or "iPhone / Apple Watch"
+        lines.append(f"- Source: Apple Health via {device}, dernière sync: {synced_at}")
+    if latest:
+        details = []
+        if latest.get("summary_date"):
+            details.append(f"date {latest['summary_date']}")
+        if latest.get("steps") is not None:
+            details.append(f"{latest['steps']} pas")
+        if latest.get("active_energy_kcal") is not None:
+            details.append(f"{latest['active_energy_kcal']} kcal actives")
+        if latest.get("sleep_minutes") is not None:
+            details.append(f"{round(latest['sleep_minutes'] / 60, 1)} h sommeil")
+        if latest.get("resting_heart_rate_bpm") is not None:
+            details.append(f"FC repos {latest['resting_heart_rate_bpm']} bpm")
+        if latest.get("hrv_ms") is not None:
+            details.append(f"HRV {latest['hrv_ms']} ms")
+        if details:
+            lines.append("- Dernier résumé: " + ", ".join(details))
+    if summaries:
+        avg_steps = _average([item.get("steps") for item in summaries])
+        avg_sleep = _average([item.get("sleep_minutes") for item in summaries])
+        if avg_steps is not None:
+            lines.append(f"- Moyenne récente: {int(avg_steps)} pas/jour")
+        if avg_sleep is not None:
+            lines.append(f"- Sommeil récent moyen: {round(avg_sleep / 60, 1)} h/nuit")
+    if workouts:
+        last_workout = workouts[-1]
+        workout_bits = [
+            last_workout.get("workout_type") or "workout",
+            str(last_workout.get("started_at") or ""),
+        ]
+        if last_workout.get("duration_minutes") is not None:
+            workout_bits.append(f"{round(last_workout['duration_minutes'])} min")
+        lines.append("- Dernier entraînement Apple Health: " + ", ".join(bit for bit in workout_bits if bit))
+    lines.append(
+        "- Utilise ces données comme signaux de contexte, pas comme diagnostic médical. "
+        "Adapte charge, récupération, hydratation et calories avec prudence."
+    )
+    return "\n".join(lines)
+
+
+def _average(values) -> float | None:
+    clean = [float(value) for value in values if value is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
+
+
 def _shared_extra(state: CoachState) -> str:
     parts = []
     if state.get("safety_instructions"):
@@ -87,6 +146,10 @@ def _shared_extra(state: CoachState) -> str:
     if environment:
         parts.append(environment)
 
+    health_context = _format_health_context(state)
+    if health_context:
+        parts.append(health_context)
+
     return "\n\n".join(parts)
 
 
@@ -94,6 +157,8 @@ def _intent_extra(state: CoachState) -> tuple[str, str, str | None]:
     intent = state.get("intent", "general")
     shared = _shared_extra(state)
     plan_type: str | None = None
+    document_request = state.get("document_request") or {}
+    incoming_message = state.get("incoming_message", "")
 
     extras = {
         "onboarding": (
@@ -136,13 +201,24 @@ def _intent_extra(state: CoachState) -> tuple[str, str, str | None]:
             "mais indique qu'elle doit être confirmée avant exécution."
         ),
         "document_request": (
-            "L'utilisateur demande un document PDF. Génère le contenu final du document, "
-            "pas une explication de ce que tu vas faire. Structure avec des titres clairs, "
-            "sections courtes, listes exploitables, quantités, consignes concrètes et "
-            "résumé final. Si le sujet est nutritionnel, inclus repas, calories, quantités, "
-            "macros si utile, budget estimé et alternatives. Si le sujet est entraînement, "
-            "inclus séances, exercices, séries, répétitions, repos, progression et liens "
-            "YouTube de démonstration. Le contenu sera transformé automatiquement en PDF."
+            "L'utilisateur demande un PDF. Tu dois générer le contenu final du PDF, "
+            "pas une réponse conversationnelle et pas une explication de ce que tu vas faire.\n\n"
+            f"Demande exacte de l'utilisateur : {incoming_message}\n"
+            f"Type de document détecté : {document_request.get('document_type', 'coach_report')}\n"
+            f"Sujet détecté : {document_request.get('subject', 'coach_summary')}\n\n"
+            "Le document doit répondre directement à cette demande précise. Commence par "
+            "un titre spécifique à la demande, puis crée des sections nettes avec du contenu "
+            "actionnable. Évite les paragraphes génériques du type 'voici un plan'. "
+            "Si le sujet est nutritionnel, inclus repas, calories, quantités, macros si utile, "
+            "budget estimé, alternatives et ajustements. Si le sujet est entraînement, inclus "
+            "séances, exercices, séries, répétitions, repos, progression et liens YouTube de "
+            "démonstration. Si le sujet est mixte, couvre entraînement, nutrition, récupération "
+            "et priorités. Le contenu sera transformé automatiquement en PDF."
+        ),
+        "out_of_scope": (
+            "L'utilisateur demande quelque chose hors du domaine du coach fitness. "
+            "Refuse brièvement et réoriente vers fitness, entraînement, nutrition, "
+            "récupération, habitudes, météo sportive, Apple Health ou PDF coach."
         ),
         "morning_plan": (
             "C'est le matin. Génère un message motivant avec :\n"
@@ -178,7 +254,7 @@ def _intent_extra(state: CoachState) -> tuple[str, str, str | None]:
     elif intent in {"nutrition", "meal_photo"}:
         plan_type = "nutrition"
     elif intent == "document_request":
-        subject = (state.get("document_request") or {}).get("subject")
+        subject = document_request.get("subject")
         if subject == "nutrition":
             plan_type = "nutrition"
         elif subject == "workout":
@@ -289,6 +365,26 @@ async def accountability_agent(state: CoachState, session: AsyncSession, llm: Ba
 
 async def document_agent(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:
     return await _run_specialist(state, session, llm, "document_agent")
+
+
+async def out_of_scope_agent(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:
+    response = (
+        "Je suis ton coach fitness IA, donc je ne peux pas traiter cette demande. "
+        "Je peux t'aider sur l'entraînement, la nutrition, la récupération, le suivi "
+        "d'habitudes, la météo pour tes séances, Apple Health ou la génération de PDF coach."
+    )
+    await record_event(
+        session,
+        state,
+        "out_of_scope_agent",
+        "refused",
+        {"intent": state.get("intent"), "response_length": len(response)},
+    )
+    return {
+        "candidate_response": response,
+        "plan_type": None,
+        "pending_actions": [],
+    }
 
 
 async def morning_plan_agent(state: CoachState, session: AsyncSession, llm: BaseLLMProvider) -> dict:

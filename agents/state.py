@@ -14,6 +14,7 @@ CoachIntent = Literal[
     "checkin",
     "accountability",
     "document_request",
+    "out_of_scope",
     "morning_plan",
     "evening_checkin",
     "inactive_followup",
@@ -52,6 +53,10 @@ class CoachState(TypedDict, total=False):
     coach_memories: list[dict[str, Any]]
     location: dict[str, Any]
     weather: dict[str, Any]
+    health_connection: dict[str, Any]
+    latest_health_summary: dict[str, Any]
+    recent_health_summaries: list[dict[str, Any]]
+    recent_health_workouts: list[dict[str, Any]]
 
     extracted_profile_updates: dict[str, Any]
     mcp_tool_context: dict[str, Any]
@@ -79,6 +84,7 @@ SPECIALIST_INTENTS: set[str] = {
     "checkin",
     "accountability",
     "document_request",
+    "out_of_scope",
     "morning_plan",
     "evening_checkin",
     "inactive_followup",
